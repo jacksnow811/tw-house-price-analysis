@@ -23,7 +23,7 @@ from playwright.async_api import async_playwright
 CONFIG = {
     "city": "台南市",        # 縣市
     "district": "仁德區",    # 鄉鎮市區（空白 = 全部）
-    "keyword": "東都綠學",   # 門牌/社區名稱
+    "keyword": "新東琚",   # 門牌/社區名稱
     "start_year": "110",     # 訂約起始年（民國）
     "start_month": "1",      # 訂約起始月
     "end_year": "115",       # 訂約結束年（民國）
@@ -124,11 +124,26 @@ async def run():
             print("[!] #price_table 未在時間內出現資料")
 
         await page.wait_for_timeout(1000)
-        records = await extract_price_table(lf)
-        print(f"[*] 擷取 {len(records)} 筆基本資料")
+        total = await read_total_count(lf)
+        if total:
+            print(f"[*] 網站回報共 {total} 筆")
 
-        # ── 逐筆點「明細」抓細部資料（主建物/陽台/車位）──────────────────────
-        await enrich_with_details(page, lf, records)
+        # ── 逐頁擷取＋抓明細（#price_table 為 DataTable，每頁只 render 約 15 列，
+        #    且只有當頁列才有「明細」按鈕，故必須一頁抓完再換下一頁）──────────
+        records = []
+        page_num = 1
+        while True:
+            page_records = await extract_price_table(lf)
+            print(f"[*] 第 {page_num} 頁：擷取 {len(page_records)} 筆基本資料")
+            await enrich_with_details(page, lf, page_records)
+            records.extend(page_records)
+            if not await goto_next_page(page, lf):
+                break
+            page_num += 1
+
+        print(f"[*] 共 {page_num} 頁，累計 {len(records)} 筆")
+        if total and len(records) != total:
+            print(f"[!] 注意：抓到 {len(records)} 筆與網站回報 {total} 筆不一致，請檢查")
 
         await lf.evaluate("() => 0")  # 確保 frame 仍存活
         await page.screenshot(path="debug_result.png", full_page=True)
@@ -153,6 +168,62 @@ async def wait_for_list_frame(page, timeout=20000):
         await page.wait_for_timeout(step)
         waited += step
     return None
+
+
+async def read_total_count(frame):
+    """讀 DataTable 的資訊列（#price_table_info，如
+    「顯示 1 至 15 筆 (查詢結果 : 311 筆)」）取出總筆數，用來和實際抓到的筆數
+    比對驗證。讀不到回 None。"""
+    try:
+        txt = await frame.evaluate(
+            "() => { const e=document.querySelector('#price_table_info');"
+            " return e ? e.innerText : ''; }"
+        )
+    except Exception:
+        return None
+    # 取「查詢結果 : N 筆」的 N；相容舊版「共 N 筆」寫法
+    m = re.search(r"查詢結果\s*[:：]\s*([\d,]+)\s*筆", txt or "") \
+        or re.search(r"共\s*([\d,]+)\s*筆", txt or "")
+    return int(m.group(1).replace(",", "")) if m else None
+
+
+async def goto_next_page(page, frame) -> bool:
+    """換到 #price_table 的下一頁。
+
+    結果表是 jQuery DataTable，下一頁按鈕為 <li id="price_table_next">（即網頁上的
+    「>」），到最後一頁時會多一個 `disabled` class。回傳是否成功換頁（最後一頁回 False）。
+    """
+    # 最後一頁（或找不到按鈕）→ 沒有下一頁
+    disabled = await frame.evaluate(
+        "() => { const li=document.querySelector('#price_table_next');"
+        " return !li || li.classList.contains('disabled'); }"
+    )
+    if disabled:
+        return False
+
+    # 記住目前第一列文字，點「>」後等它變化，確認新頁已 render 完成
+    prev = await frame.evaluate(
+        "() => { const tr=document.querySelector('#price_table tbody tr');"
+        " return tr ? tr.innerText : ''; }"
+    )
+    await frame.evaluate(
+        "() => { const li=document.querySelector('#price_table_next');"
+        " const a=li.querySelector('a') || li; a.click(); }"
+    )
+    try:
+        await frame.wait_for_function(
+            """(prev) => {
+                const tr = document.querySelector('#price_table tbody tr');
+                return tr && tr.innerText !== prev;
+            }""",
+            arg=prev,
+            timeout=10000,
+        )
+    except Exception:
+        print("  [!] 換頁後表格未在時間內更新，停止換頁")
+        return False
+    await page.wait_for_timeout(400)
+    return True
 
 
 DETAIL_FIELDS = ["主建物坪數", "陽台坪數", "車位類別", "車位價格", "車位面積", "所在樓層"]
