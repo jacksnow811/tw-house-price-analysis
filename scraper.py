@@ -226,7 +226,7 @@ async def goto_next_page(page, frame) -> bool:
     return True
 
 
-DETAIL_FIELDS = ["主建物坪數", "陽台坪數", "車位類別", "車位價格", "車位面積", "所在樓層"]
+DETAIL_FIELDS = ["主建物坪數", "陽台坪數", "土地移轉面積", "車位類別", "車位價格", "車位面積", "所在樓層"]
 
 
 async def enrich_with_details(page, lf, records: list[dict]):
@@ -234,6 +234,7 @@ async def enrich_with_details(page, lf, records: list[dict]):
 
     回應 JSON 結構：
       buildlist: {"主建物":坪, "陽台":坪, ...}
+      d: [{d1:地號, d2:土地移轉面積, d3:使用分區, d5:移轉持分}, ...]
       r: [{r2:車位類別, r3:車位價格, r4:車位面積, r6:所在樓層}, ...]
     以門牌（地段位置或門牌）對應回 records，確保不會錯位。
     """
@@ -270,9 +271,11 @@ async def enrich_with_details(page, lf, records: list[dict]):
 
         bl = j.get("buildlist", {}) or {}
         cars = j.get("r", []) or []
+        lands = j.get("d", []) or []   # 土地標示：d1=地號, d2=土地移轉面積, d3=使用分區, d5=移轉持分
         detail = {
             "主建物坪數": bl.get("主建物", ""),
             "陽台坪數": bl.get("陽台", ""),
+            "土地移轉面積": "；".join(str(d.get("d2", "")) for d in lands if d.get("d2")),
             "車位類別": "；".join(str(c.get("r2", "")) for c in cars if c.get("r2")),
             "車位價格": "；".join(str(c.get("r3", "")) for c in cars if c.get("r3")),
             "車位面積": "；".join(str(c.get("r4", "")) for c in cars if c.get("r4")),
@@ -282,6 +285,7 @@ async def enrich_with_details(page, lf, records: list[dict]):
         if target is not None:
             target.update(detail)
         print(f"  [{i+1}/{n}] {door}　主建物={detail['主建物坪數']} 陽台={detail['陽台坪數']} "
+              f"土地移轉面積={detail['土地移轉面積']} "
               f"車位=[{detail['車位類別']} | {detail['車位價格']} | {detail['車位面積']} | {detail['所在樓層']}]")
 
         # 明細是彈出 modal（#detailModalCenter），必須關掉才能點下一筆

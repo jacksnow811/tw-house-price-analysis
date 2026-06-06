@@ -1,0 +1,53 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+context: |
+  專案：台灣不動產實價登錄的「抓取 + 分析」工具。
+  分兩部分：
+    1. 資料抓取（已完成 ✅）：用 Playwright 爬內政部實價登錄網
+       (https://lvr.land.moi.gov.tw/)，依查詢條件抓取成交資料，
+       存成 CSV 到 data/。
+    2. 資料分析（進行中 🛠️）：針對 data/ 內的 CSV 做整理與分析
+       （核心：計算「實坪制坪價」；台灣為虛坪制，需扣除車位價格、
+       再除以主建物坪數）。
+
+  Tech stack:
+    - Python >= 3.9，用 uv 管理依賴（uv sync / uv run）。
+    - Playwright (chromium) 做網頁爬蟲。
+    - pandas 做資料整理；matplotlib（Agg backend）做繪圖輸出。
+
+  主要檔案：
+    - scraper.py     主爬蟲（已完成可用），最上方 CONFIG dict 設定查詢條件。
+    - analysis.py    資料分析（讀 data/*.csv → 算實坪制坪價 → 輸出 analysis/）。
+    - openspec/specs/  正式規格（data-scraping、data-analysis、housing-analysis 等能力，現況真相）。
+    - openspec/changes/ 待實作的變更提案。
+    - .claude/skills/housing-analysis/  Claude Code skill：給建案名→確認建案/建商→上網（含 PTT/Dcard/Threads/FB）蒐集評價/新聞→產出建案優劣分析（含建商分析）。
+    - data/*.csv     抓取結果（gitignore，依條件自動命名，UTF-8-BOM）。
+    - CLAUDE.md      給 AI 的專案指引。
+
+  網站爬蟲關鍵原理（改 scraper.py 前必讀）：
+    - 搜尋按鈕不送 AJAX，而是 JS handler：會偵測 navigator.webdriver，
+      自動化瀏覽器會直接 return → 用 init script (STEALTH_JS) 偽裝成 undefined。
+    - 「交易標的」(input[name='ptype']) 至少要勾一個 → 程式全部勾選。
+    - 送出查詢用 JS button[go_type="list"].click() 觸發 handler，勿用座標點擊。
+    - 結果在 list.jsp frame 的 #price_table；明細走 /QueryPrice/detail/ AJAX (回 JSON)。
+    - 關明細 modal 前要先等 Bootstrap 動畫結束再強制關，否則 modal 卡住。
+
+  輸出格式：每筆 28 欄 = 前置 3 欄（city/district/keyword）
+    + 基本 19 欄（#price_table）+ 明細 6 欄（detail API）。
+
+  已知限制：DataTable 分頁；速度每筆打一次明細 API（N×1~2 秒）。
+
+  慣例：
+    - 語言以繁體中文為主：程式碼註解、文件、輸出訊息皆用中文。
+    - 縣市 / 鄉鎮市區 / 社區名稱 / 訂約年月皆用民國年。
+    - 不要 commit data/、*.png、.venv（已在 .gitignore）。
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+rules:
+  proposal:
+    - 用繁體中文撰寫
+  tasks:
+    - 用繁體中文撰寫
