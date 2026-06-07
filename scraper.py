@@ -24,7 +24,7 @@ CONFIG = {
     "city": "台南市",        # 縣市
     "district": "仁德區",    # 鄉鎮市區（空白 = 全部）
     "keyword": "新東琚",   # 門牌/社區名稱
-    "start_year": "110",     # 訂約起始年（民國）
+    "start_year": "105",     # 訂約起始年（民國）
     "start_month": "1",      # 訂約起始月
     "end_year": "115",       # 訂約結束年（民國）
     "end_month": "12",        # 訂約結束月
