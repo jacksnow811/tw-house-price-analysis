@@ -65,6 +65,7 @@ uv run scraper.py
 | `openspec/specs/` | 正式規格（`data-scraping`、`data-analysis`、`housing-analysis` 等能力，現況真相） |
 | `openspec/changes/` | 待實作的變更提案 |
 | `.claude/skills/housing-analysis/` | Claude Code skill：給建案名 → 確認建案/建商 → 上網（含 PTT/Dcard/Threads/FB）蒐集評價/新聞 → 產出建案優劣分析（含建商分析）（`/housing-analysis`） |
+| `.claude/skills/price-negotiation/` | Claude Code skill：給大樓物件 → 讀 `data/` 社區實價登錄算實坪制坪價行情 → 即時查行情 → 站在**買方**產出三段式報價＋談判話術（`/price-negotiation`）。含 `scripts/comps_stats.py`、`reference/談價方法論.md` |
 | `data/*.csv` | 抓取結果（gitignore，依條件自動命名） |
 | `debug_result.png` | 最新結果頁截圖（gitignore） |
 | `pyproject.toml` | uv 專案設定 |
