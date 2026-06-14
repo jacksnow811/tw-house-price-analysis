@@ -155,18 +155,46 @@ def parse_remark(path: Path) -> list[tuple[str, str, str]]:
     return rules
 
 
+def match_specificity(pattern: str, address: str) -> int | None:
+    """比對單條規則的地址關鍵字，回傳『特異度』或 None(沒命中)。
+
+    地址關鍵字可用『&』（或全形『＆』）串接多段，代表 address 需『同時包含』
+    全部子字串（AND）。常用於「號」與「之X 戶別」中間夾著樓層、無法用單一連續
+    字串鎖定時（例『段１６號 & 之５』＝門牌同時含『段１６號』與『之５』）。
+
+    特異度 ＝ 命中各子字串的長度和（數字越大越精確，供『較精確者優先』排序）；
+    任一子字串不在 address → None。單一子字串時行為等同舊版 `pattern in address`。
+    """
+    parts = [p.strip() for p in re.split(r"[&＆]", pattern) if p.strip()]
+    if not parts:
+        return None
+    total = 0
+    for p in parts:
+        if p not in address:
+            return None
+        total += len(p)
+    return total
+
+
 def classify_side(address, rules) -> str | None:
-    """用地址比對規則 → 『對外』/『對內』/『未知』(衝突)/None(沒命中)。"""
+    """用地址比對規則 → 『對外』/『對內』/『未知』(衝突)/None(沒命中)。
+
+    採『較精確（特異度較大）優先』；同特異度但側別相異 → 『未知』(衝突)。
+    """
     a = str(address)
     if not a or a.lower() == "nan":
         return None
     best_len, best_side, conflict = -1, None, False
     for side, pattern, _ in rules:
-        if pattern and pattern in a:
-            if len(pattern) > best_len:
-                best_len, best_side, conflict = len(pattern), side, False
-            elif len(pattern) == best_len and side != best_side:
-                conflict = True
+        if not pattern:
+            continue
+        spec = match_specificity(pattern, a)
+        if spec is None:
+            continue
+        if spec > best_len:
+            best_len, best_side, conflict = spec, side, False
+        elif spec == best_len and side != best_side:
+            conflict = True
     if best_side is None:
         return None
     return "未知" if conflict else best_side
