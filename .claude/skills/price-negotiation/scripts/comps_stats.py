@@ -100,6 +100,78 @@ def find_files(data_dir: Path, keyword: str) -> list[Path]:
     )
 
 
+# --- 景觀對內／對外（讀 remark/，用「地段位置或門牌」比對） ---
+_SIDE_OUT = {"對外", "外", "朝外", "面外", "對外戶", "外觀戶"}
+_SIDE_IN = {"對內", "內", "朝內", "面內", "中庭", "對內戶", "中庭戶"}
+
+
+def norm_side(s) -> str | None:
+    """把使用者寫的側別正規化成『對外』/『對內』；無法判斷回 None。"""
+    s = str(s).strip()
+    if s in _SIDE_OUT:
+        return "對外"
+    if s in _SIDE_IN:
+        return "對內"
+    return None
+
+
+def find_remark_file(remark_dir: Path, keyword: str):
+    """在 remark/ 找檔名含社區關鍵字的備註檔（排除 README 與 _/. 開頭）。"""
+    if not remark_dir.exists():
+        return None
+    cands = [p for p in remark_dir.glob("*")
+             if p.is_file() and keyword in p.stem
+             and not p.name.startswith(("README", "_", "."))]
+    cands.sort(key=lambda p: (p.stem != keyword, len(p.stem)))
+    return cands[0] if cands else None
+
+
+def parse_remark(path: Path) -> list[tuple[str, str, str]]:
+    """讀備註檔 → [(側別, 地址關鍵字, 說明)]。
+
+    格式：一行一條『側別 | 地址關鍵字 | 說明』；# 開頭或無 | 的行＝註解。
+    也容忍 markdown 表格（前後空欄與 --- 分隔列會被略過）。
+    """
+    rules: list[tuple[str, str, str]] = []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        text = path.read_text(encoding="utf-8-sig")
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "|" not in line:
+            continue
+        parts = [c.strip() for c in line.split("|") if c.strip() != ""]
+        if len(parts) < 2:
+            continue
+        side = norm_side(parts[0])
+        if side is None:                              # 表頭或非規則列
+            continue
+        pattern = parts[1]
+        if not pattern or set(pattern) <= set("-:"):  # markdown 分隔列
+            continue
+        note = parts[2] if len(parts) > 2 else ""
+        rules.append((side, pattern, note))
+    return rules
+
+
+def classify_side(address, rules) -> str | None:
+    """用地址比對規則 → 『對外』/『對內』/『未知』(衝突)/None(沒命中)。"""
+    a = str(address)
+    if not a or a.lower() == "nan":
+        return None
+    best_len, best_side, conflict = -1, None, False
+    for side, pattern, _ in rules:
+        if pattern and pattern in a:
+            if len(pattern) > best_len:
+                best_len, best_side, conflict = len(pattern), side, False
+            elif len(pattern) == best_len and side != best_side:
+                conflict = True
+    if best_side is None:
+        return None
+    return "未知" if conflict else best_side
+
+
 def fmt(x) -> str:
     return "—" if x is None or (isinstance(x, float) and np.isnan(x)) else f"{x:.2f}"
 
@@ -121,6 +193,8 @@ def main() -> None:
     ap.add_argument("--years", type=float, default=2.0,
                     help="『近期』定義：距最新一筆成交幾年內（預設 2）")
     ap.add_argument("--data-dir", default=None, help="資料夾（預設專案 data/）")
+    ap.add_argument("--remark-dir", default=None,
+                    help="景觀備註資料夾（預設專案 remark/）")
     args = ap.parse_args()
 
     repo_root = Path(__file__).resolve().parents[4]
@@ -219,6 +293,54 @@ def main() -> None:
         if b in g.groups:
             s = g.get_group(b)
             print(f"  {b:<14} n={len(s):<3} 中位數 {fmt(s.median())}")
+
+    # 景觀：對外 / 對內（依 remark/，用地段位置或門牌比對）
+    remark_dir = Path(args.remark_dir) if args.remark_dir else repo_root / "remark"
+    print("\n【景觀：對外 vs 對內】（依 remark/ 規則，用地段位置或門牌比對）")
+    rf = find_remark_file(remark_dir, args.keyword)
+    if rf is None:
+        print(f"  （未在 {remark_dir} 找到含「{args.keyword}」的景觀備註，未分組。）")
+        print(f"  → 可建立 {remark_dir / (args.keyword + '.md')}；格式見 remark/README.md。")
+    else:
+        rules = parse_remark(rf)
+        addr_col = next((c for c in clean.columns if "門牌" in c), None)
+        if not rules:
+            print(f"  （{rf.name} 無可用規則；格式見 remark/README.md。）")
+        elif addr_col is None:
+            print("  （comps 找不到『地段位置或門牌』欄，無法比對地址。）")
+        else:
+            clean["景觀側"] = clean[addr_col].map(lambda a: classify_side(a, rules))
+            out = clean[clean["景觀側"] == "對外"]["實坪制坪價"].dropna()
+            inn = clean[clean["景觀側"] == "對內"]["實坪制坪價"].dropna()
+            unknown = clean[~clean["景觀側"].isin(["對外", "對內"])]
+            print(f"  來源：{rf.name}（{len(rules)} 條規則）")
+            describe(out, "對外")
+            describe(inn, "對內")
+            print(f"  未分類（未知／規則沒命中）：{len(unknown)} 筆")
+            if not out.empty and not inn.empty:
+                diff = out.median() - inn.median()
+                pct = (out.median() / inn.median() - 1) * 100 if inn.median() else float("nan")
+                print(f"  → 對外溢價：中位數高 {fmt(diff)} 萬/坪，約 {pct:+.0f}%"
+                      f"（對外 {fmt(out.median())} vs 對內 {fmt(inn.median())}）")
+                if min(len(out), len(inn)) < 5:
+                    print("  ※ 兩組樣本偏少，溢價僅供參考、信心較低。")
+                print("  ※ 溢價可能與樓層／棟別混淆 → 請對照各樓層帶兩側中位數：")
+                for b in order:
+                    sub = clean[clean["樓層帶"] == b]
+                    so = sub[sub["景觀側"] == "對外"]["實坪制坪價"].dropna()
+                    si = sub[sub["景觀側"] == "對內"]["實坪制坪價"].dropna()
+                    if len(so) or len(si):
+                        print(f"    {b:<14} 對外 {fmt(so.median())}(n={len(so)})"
+                              f"｜對內 {fmt(si.median())}(n={len(si)})")
+            else:
+                print("  → 對外或對內其一無有效 comps，無法算溢價（資料不足）。")
+            if len(unknown):
+                samples = [a for a in unknown[addr_col].dropna().unique()
+                           if str(a).strip()][:8]
+                if samples:
+                    print("  未命中規則的門牌（可據此補 remark）：")
+                    for a in samples:
+                        print(f"    - {a}")
 
     # 主建物坪數帶（坪效/小宅大宅）
     print("\n【主建物坪數分布】")
