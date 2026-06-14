@@ -6,8 +6,7 @@ dist/
 wheels/
 *.egg-info
 *.png
-*.csv
-data/
+analysis/
 *.lock
 # Virtual environments
 .venv
