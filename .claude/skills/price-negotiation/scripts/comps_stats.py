@@ -262,6 +262,12 @@ def main() -> None:
     df["實坪制坪價"] = (total_price - car_price) / main_area
     df["主建物坪數_num"] = main_area
     df["車位數"] = car_count
+    # 賣方身份：建商一手 vs 投資客/房仲二手。
+    # 判定法則（使用者提供，資料驗證成立）：建商賣的（預售＋餘屋）都會把車位價格寫進
+    # 「車位總價 (萬元)」；投資客/房仲轉售（二手）這欄通常空白。故「車位總價有值＝建商
+    # 一手；空白＝二手」。注意：本來就無車位的成交，此欄空白屬正常、賣方信號較弱（另標）。
+    df["賣方"] = np.where(parking_total.notna(), "建商一手", "投資客二手")
+    df["有車位"] = has_car
     df["日期"] = df["交易日期"].map(roc_to_date)
     df["樓層"] = df["樓別/樓高"].map(lambda s: floor_pair(s)[0])
     df["總樓層"] = df["樓別/樓高"].map(lambda s: floor_pair(s)[1])
@@ -321,6 +327,36 @@ def main() -> None:
         if b in g.groups:
             s = g.get_group(b)
             print(f"  {b:<14} n={len(s):<3} 中位數 {fmt(s.median())}")
+
+    # 賣方：建商一手 vs 投資客/房仲二手（依「車位總價 (萬元)」有無判定）
+    print("\n【賣方：建商一手 vs 投資客/房仲二手】"
+          "（依「車位總價 (萬元)」：有值＝建商一手；空白＝二手）")
+    dev = clean[clean["賣方"] == "建商一手"]["實坪制坪價"].dropna()
+    inv = clean[clean["賣方"] == "投資客二手"]["實坪制坪價"].dropna()
+    describe(dev, "建商一手")
+    describe(inv, "投資客/房仲二手")
+    nocar_inv = clean[(clean["賣方"] == "投資客二手") & (~clean["有車位"])]
+    if len(nocar_inv):
+        print(f"  （二手中有 {len(nocar_inv)} 筆本來就無車位，車位總價空白屬正常、"
+              f"賣方信號較弱）")
+    if not dev.empty and not inv.empty:
+        diff = inv.median() - dev.median()
+        print(f"  → 二手 − 一手 中位數差：{fmt(diff)} 萬/坪"
+              f"（建商一手 {fmt(dev.median())} vs 二手 {fmt(inv.median())}）")
+        if min(len(dev), len(inv)) < 5:
+            print("  ※ 其一樣本偏少，差值僅供參考、信心較低。")
+        print("  ※ 目標向建商買(餘屋/一手) → 主錨用『建商一手』組；"
+              "向投資客/屋主買(二手) → 用二手組。跨組才用此差校正。")
+        print("  ※ 賣方差可能與樓層／棟別／時間混淆 → 請對照各樓層帶兩側中位數：")
+        for b in order:
+            sub = clean[clean["樓層帶"] == b]
+            sd = sub[sub["賣方"] == "建商一手"]["實坪制坪價"].dropna()
+            si = sub[sub["賣方"] == "投資客二手"]["實坪制坪價"].dropna()
+            if len(sd) or len(si):
+                print(f"    {b:<14} 建商 {fmt(sd.median())}(n={len(sd)})"
+                      f"｜二手 {fmt(si.median())}(n={len(si)})")
+    else:
+        print("  → 建商一手或二手其一無有效 comps，無法比較（資料不足）。")
 
     # 景觀：對外 / 對內（依 remark/，用地段位置或門牌比對）
     remark_dir = Path(args.remark_dir) if args.remark_dir else repo_root / "remark"
